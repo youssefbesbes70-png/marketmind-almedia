@@ -1,0 +1,4 @@
+pandas==3.1.1
+networkx==3.7
+tzdata==2026.6
+pytest==9.2.0
