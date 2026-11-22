@@ -6,17 +6,15 @@ from typing import Any
 import pandas as pd
 
 
-REQUIRED_COLUMNS = {
-    "timestamp",
-    "country",
-    "device",
+_NUMERIC_COLUMNS = (
     "visitors",
     "checkout_attempts",
     "successful_payments",
     "payment_success_rate",
     "orders",
     "revenue",
-}
+)
+REQUIRED_COLUMNS = {"timestamp", "country", "device", *_NUMERIC_COLUMNS}
 
 
 def detect_payment_incidents(
@@ -32,8 +30,8 @@ def detect_payment_incidents(
 
     Each hour is compared with earlier rows from the same country, device, and
     hour of day. Very small samples are skipped so quiet overnight hours do
-    not create unstable payment-rate alerts. Consecutive alert hours for the
-    same segment become one incident.
+    not create unstable payment-rate alerts. Incomplete rows are skipped,
+    and only consecutive observed alert hours become one incident.
     """
     missing = REQUIRED_COLUMNS - set(data.columns)
     if missing:
@@ -43,8 +41,14 @@ def detect_payment_incidents(
     if not 0 <= min_rate_drop <= 1 or not 0 <= max_current_rate <= 1:
         raise ValueError("Payment-rate settings must be between 0 and 1.")
 
-    frame = data.copy()
-    frame["timestamp"] = pd.to_datetime(frame["timestamp"])
+    frame = data.loc[:, sorted(REQUIRED_COLUMNS)].copy()
+    frame["timestamp"] = pd.to_datetime(frame["timestamp"], errors="coerce")
+    for column in _NUMERIC_COLUMNS:
+        values = pd.to_numeric(frame[column], errors="coerce")
+        frame[column] = values.replace([float("inf"), float("-inf")], float("nan"))
+    frame = frame.dropna()
+    if frame.empty:
+        return []
     frame["_hour"] = frame["timestamp"].dt.hour
     frame = frame.sort_values("timestamp").reset_index(drop=True)
     cutoff_delta = pd.Timedelta(days=lookback_days)
@@ -63,8 +67,6 @@ def detect_payment_incidents(
             & (frame["timestamp"] < row["timestamp"])
             & (frame["timestamp"] >= row["timestamp"] - cutoff_delta)
         ]
-        if "scenario" in earlier.columns:
-            earlier = earlier[earlier["scenario"] != "payment_failure"]
         if len(earlier) < min_baseline_points:
             continue
 
