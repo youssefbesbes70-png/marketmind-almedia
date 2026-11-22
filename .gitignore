@@ -17,3 +17,4 @@ credentials.*
 *.p12
 *.pfx
 .monitoring_state.json
+.streamlit/secrets.toml

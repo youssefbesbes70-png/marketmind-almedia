@@ -1,11 +1,14 @@
 """Offline Streamlit dashboard for MarketMind's simulated marketplace."""
 
 from datetime import datetime
+from os import getenv
 
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 
 from graph import build_graph
 from monitoring.agent import run_monitoring
+from monitoring.ai_explainer import ANALYSIS_SECTIONS, analyze_incident
 from simulator import generate_data
 from visualization import metric_graph_figure
 
@@ -20,6 +23,34 @@ def load_demo():
 
 def _time_label(timestamp: str) -> str:
     return datetime.fromisoformat(timestamp).strftime("%d %b %Y, %H:%M")
+
+
+def _render_claude_analysis(panel, report, graph):
+    analyses = st.session_state.setdefault("claude_analyses", {})
+    incident_id = report["incident_id"]
+    panel.caption("Optional live analysis. Clicking sends this simulated incident to Claude and may use API credits.")
+    if panel.button("Analyze with Claude", key="analyze_claude", disabled=incident_id in analyses):
+        api_key = getenv("ANTHROPIC_API_KEY", "").strip()
+        if not api_key:
+            try:
+                api_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+            except StreamlitSecretNotFoundError:
+                api_key = ""
+        if not isinstance(api_key, str) or not api_key.strip():
+            panel.warning("Set ANTHROPIC_API_KEY in your environment or Streamlit secrets, then try again.")
+        else:
+            try:
+                with panel.spinner("Analyzing the selected incident…"):
+                    analyses[incident_id] = analyze_incident(report, graph, api_key=api_key)
+            except RuntimeError as error:
+                panel.warning(f"{error} The investigation report above is still available.")
+            except ValueError:
+                panel.warning("The incident path could not be validated. The offline report is still available.")
+    if incident_id in analyses:
+        panel.subheader("AI-generated hypothesis")
+        for key, title in ANALYSIS_SECTIONS:
+            panel.markdown(f"**{title}**")
+            panel.text(analyses[incident_id][key])
 
 
 def render_dashboard(data, graph, reports):
@@ -79,6 +110,7 @@ def render_dashboard(data, graph, reports):
             f"{report['checkout_attempts']:,} attempts."
         )
         graph_panel.caption(" → ".join(metric.replace("_", " ").capitalize() for metric in report["metric_path"]))
+        _render_claude_analysis(incident_panel, report, graph)
 
 
 def main():
