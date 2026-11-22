@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, Mock
+from urllib.error import HTTPError
 
 import pytest
 from streamlit.testing.v1 import AppTest
 
 import dashboard
 from graph import build_graph
+from monitoring import ai_explainer
 from visualization import metric_graph_figure
 
 
@@ -83,3 +86,73 @@ def test_no_incidents_still_displays_graph(monkeypatch, demo):
     assert "No incidents" in app.info[0].value
     assert set(_plot(app)[-1]["ids"]) == set(graph)
     assert not _highlighted_edges(_plot(app))
+
+
+def test_claude_analysis_only_runs_on_click_and_survives_reruns(monkeypatch, demo):
+    monkeypatch.setattr(dashboard, "load_demo", lambda: demo)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    sections = {key: f"Mock {title.lower()}." for key, title in ai_explainer.ANALYSIS_SECTIONS}
+    request = MagicMock()
+    request.return_value.__enter__.return_value.read.return_value = json.dumps({
+        "content": [{"type": "text", "text": json.dumps(sections)}],
+    }).encode()
+    monkeypatch.setattr(ai_explainer, "urlopen", request)
+    app = AppTest.from_string("from dashboard import main\nmain()")
+    app.secrets["ANTHROPIC_API_KEY"] = "mock-key"
+    app.run()
+    request.assert_not_called()
+    app.button(key="analyze_claude").click().run()
+
+    assert not app.exception
+    assert app.subheader[-1].value == "AI-generated hypothesis"
+    assert {element.value for element in app.text} == set(sections.values())
+    sent = request.call_args.args[0]
+    assert sent.full_url == "https://api.anthropic.com/v1/messages"
+    assert sent.get_header("X-api-key") == "mock-key"
+    assert request.call_args.kwargs["timeout"] == 30
+    body = json.loads(sent.data)
+    evidence = json.loads(body["messages"][0]["content"])
+    actual = demo[2][0]
+    assert evidence["incident"]["incident_id"] == actual["incident_id"]
+    assert evidence["incident"]["revenue_eur"] == actual["revenue_eur"]
+    assert evidence["metric_path"] == actual["metric_path"]
+    assert [edge["relationship"] for edge in evidence["path_relationships"]] == [
+        "formula_input", "equality", "formula_input",
+    ]
+    assert "likely_cause" not in evidence["incident"]
+    assert "mock-key" not in body["messages"][0]["content"]
+    assert "tools" not in body
+
+    app.run()
+    assert app.subheader[-1].value == "AI-generated hypothesis"
+    request.assert_called_once()
+
+
+def test_claude_missing_key_keeps_report_available(monkeypatch, demo):
+    monkeypatch.setattr(dashboard, "load_demo", lambda: demo)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    request = Mock()
+    monkeypatch.setattr(ai_explainer, "urlopen", request)
+    app = AppTest.from_string("from dashboard import main\nmain()")
+    app.secrets["unrelated"] = "test"
+    app.run().button(key="analyze_claude").click().run()
+    assert not app.exception
+    assert "Set ANTHROPIC_API_KEY" in app.warning[0].value
+    assert any(item.value == "Investigation report" for item in app.subheader)
+    request.assert_not_called()
+
+
+def test_claude_api_failure_keeps_report_available(monkeypatch, demo):
+    monkeypatch.setattr(dashboard, "load_demo", lambda: demo)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "mock-key")
+    request = Mock(side_effect=HTTPError("https://api.anthropic.com/v1/messages", 503, "mock-key", None, None))
+    monkeypatch.setattr(ai_explainer, "urlopen", request)
+    app = AppTest.from_string("from dashboard import main\nmain()").run()
+    app.button(key="analyze_claude").click().run()
+    assert not app.exception
+    assert "HTTP 503" in app.warning[0].value
+    assert "mock-key" not in app.warning[0].value
+    assert any(item.value == "Investigation report" for item in app.subheader)
+    assert not app.button(key="analyze_claude").disabled
+    app.run()
+    request.assert_called_once()
