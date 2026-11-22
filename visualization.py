@@ -9,11 +9,20 @@ import plotly.graph_objects as go
 
 
 _EDGE_STYLES = {
-    "formula_input": ("Formula input", "#3768a5", "solid"),
-    "equality": ("Equality", "#7356a0", "dash"),
-    "funnel_relation": ("Possible influence", "#64748b", "dot"),
+    "formula_input": ("Formula input", "#6aa9ff", "solid"),
+    "equality": ("Equality", "#b19bff", "dash"),
+    "funnel_relation": ("Possible influence", "#6ecddc", "dot"),
 }
-_HIGHLIGHT = "#b74014"
+_HIGHLIGHT = "#ffa36d"
+
+
+def _metric_tooltip(node, metadata):
+    name = escape(node.replace("_", " ").capitalize())
+    detail = escape(metadata["description"])
+    unit = escape(metadata["unit"])
+    formula = metadata.get("formula")
+    formula_line = f"<br>Formula: {escape(formula)}" if formula else ""
+    return f"<b>{name}</b><br>{detail}<br>Unit: {unit}{formula_line}"
 
 
 def metric_graph_figure(
@@ -61,7 +70,7 @@ def metric_graph_figure(
             legend_types.add(relationship)
 
     nodes = list(graph)
-    colors = [_HIGHLIGHT if node in highlight_nodes else "#3768a5" for node in nodes]
+    colors = [_HIGHLIGHT if node in highlight_nodes else "#28466d" for node in nodes]
     figure.add_trace(go.Scatter(
         x=[positions[node][0] for node in nodes],
         y=[positions[node][1] for node in nodes],
@@ -70,21 +79,22 @@ def metric_graph_figure(
         text=["<b>" + "<br>".join(wrap(escape(node.replace("_", " ").capitalize()), width=14)) + "</b>"
               for node in nodes],
         textposition=["top center" if positions[node][1] > 0 else "bottom center" for node in nodes],
-        textfont=dict(size=19, color="#172b45"),
-        hovertext=[
-            f"{escape(graph.nodes[node]['description'])}<br>Unit: {escape(graph.nodes[node]['unit'])}"
-            for node in nodes
-        ],
+        textfont=dict(size=16, color="#e6edf9"),
+        hovertext=[_metric_tooltip(node, graph.nodes[node]) for node in nodes],
         hovertemplate="%{hovertext}<extra></extra>",
-        marker=dict(color=colors, size=36, line=dict(width=3, color="white")),
+        marker=dict(
+            color=colors, size=[32 if node in highlight_nodes else 27 for node in nodes],
+            line=dict(width=2, color=["#ffe0c7" if node in highlight_nodes else "#85bfff" for node in nodes]),
+        ),
     ))
     vertical_extent = max((abs(y) for _, y in positions.values()), default=0)
     figure.update_layout(
         annotations=arrows,
-        height=max(400, 180 + 110 * max(map(len, layers), default=0)),
-        margin=dict(l=24, r=24, t=52, b=16),
-        paper_bgcolor="#f8fafc", plot_bgcolor="#f8fafc",
-        legend=dict(orientation="h", x=0, y=1.04, font=dict(size=16, color="#172b45"),
+        height=max(345, 145 + 100 * max(map(len, layers), default=0)),
+        margin=dict(l=12, r=12, t=49, b=12),
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+        hoverlabel=dict(bgcolor="#17253c", bordercolor="#526c90", font=dict(color="#f1f6ff")),
+        legend=dict(orientation="h", x=0, y=1.08, font=dict(size=13, color="#cfdef7"),
                     itemclick=False, itemdoubleclick=False),
         xaxis=dict(visible=False, fixedrange=True, range=[-0.6, max(0, len(layers) - 1) + 0.6]),
         yaxis=dict(visible=False, fixedrange=True, range=[-vertical_extent - 0.65, vertical_extent + 0.65]),

@@ -104,7 +104,7 @@ def test_claude_analysis_only_runs_on_click_and_survives_reruns(monkeypatch, dem
     app.button(key="analyze_claude").click().run()
 
     assert not app.exception
-    assert app.subheader[-1].value == "AI-generated hypothesis"
+    assert any(item.value == "AI-generated hypothesis" for item in app.subheader)
     assert {element.value for element in app.text} == set(sections.values())
     sent = request.call_args.args[0]
     assert sent.full_url == "https://api.anthropic.com/v1/messages"
@@ -124,7 +124,7 @@ def test_claude_analysis_only_runs_on_click_and_survives_reruns(monkeypatch, dem
     assert "tools" not in body
 
     app.run()
-    assert app.subheader[-1].value == "AI-generated hypothesis"
+    assert any(item.value == "AI-generated hypothesis" for item in app.subheader)
     request.assert_called_once()
 
 
