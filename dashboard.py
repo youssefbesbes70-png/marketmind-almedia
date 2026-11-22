@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from os import getenv
+from pathlib import Path
 
 import streamlit as st
 from streamlit.errors import StreamlitSecretNotFoundError
@@ -26,10 +27,14 @@ def _time_label(timestamp: str) -> str:
 
 
 def _render_claude_analysis(panel, report, graph):
+    panel = panel.container(key="claude_panel", border=True)
+    panel.subheader("Claude AI analysis")
     analyses = st.session_state.setdefault("claude_analyses", {})
     incident_id = report["incident_id"]
-    panel.caption("Optional live analysis. Clicking sends this simulated incident to Claude and may use API credits.")
-    if panel.button("Analyze with Claude", key="analyze_claude", disabled=incident_id in analyses):
+    panel.caption("AI-assisted explanation of the evidence above. Clicking sends the simulated incident to Claude and may use API credits. Claude does not run follow-up checks.")
+    if panel.button(
+        "Analyze with Claude", key="analyze_claude", type="primary", disabled=incident_id in analyses
+    ):
         api_key = getenv("ANTHROPIC_API_KEY", "").strip()
         if not api_key:
             try:
@@ -53,22 +58,62 @@ def _render_claude_analysis(panel, report, graph):
             panel.text(analyses[incident_id][key])
 
 
-def render_dashboard(data, graph, reports):
-    st.title("MarketMind")
-    st.caption("**Simulated data** · Germany and France · November 2026")
-
+def _render_overview(data):
+    st.html("""
+        <header class="mm-header">
+            <div class="mm-brand">
+                <span class="mm-mark" aria-hidden="true">◈</span>
+                <div><h1>MarketMind</h1><p>Intelligent Marketplace Observability</p></div>
+            </div>
+            <div class="mm-status">
+                <span class="mm-chip"><span class="mm-dot" aria-hidden="true"></span>Scan complete</span>
+                <span class="mm-chip">Simulated data · DE and FR</span>
+            </div>
+        </header>
+    """)
     st.header("Marketplace overview")
-    visitors, orders, revenue, incidents = st.columns(4)
-    visitors.metric("Visitors", f"{data['visitors'].sum():,}")
-    orders.metric("Orders", f"{data['orders'].sum():,}")
-    revenue.metric("Revenue", f"€{data['revenue'].sum():,.2f}")
-    incidents.metric("Detected incidents", len(reports))
+    metrics = (
+        ("Total visitors", f"{data['visitors'].sum():,}", "◉", "#80b6ff"),
+        ("Checkout attempts", f"{data['checkout_attempts'].sum():,}", "◇", "#67deef"),
+        ("Successful payments", f"{data['successful_payments'].sum():,}", "✓", "#b0a0ff"),
+        ("Revenue", f"€{data['revenue'].sum():,.2f}", "€", "#84dbc5"),
+    )
+    cards = "".join(
+        f'<div class="mm-kpi" style="--accent:{accent}">'
+        f'<div class="mm-kpi-label"><span aria-hidden="true">{icon}</span>{label}</div>'
+        f'<strong>{value}</strong></div>'
+        for label, value, icon, accent in metrics
+    )
+    st.html(f'<div class="mm-kpis">{cards}</div>')
 
-    graph_panel, incident_panel = st.columns([2, 1], gap="large")
+
+def _render_payment_comparison(panel, report):
+    rates = (
+        ("Baseline payment success", float(report["baseline_payment_success_rate"]), "baseline"),
+        ("Observed payment success", float(report["current_payment_success_rate"]), "observed"),
+    )
+    bars = "".join(
+        f'<div class="mm-rate-label"><span>{label}</span><strong>{rate:.1%}</strong></div>'
+        f'<div class="mm-track" aria-hidden="true">'
+        f'<div class="mm-fill mm-{kind}" style="width:{rate * 100:.2f}%"></div></div>'
+        for label, rate, kind in rates
+    )
+    panel.html(f'<div class="mm-comparison">{bars}</div>')
+
+
+def render_dashboard(data, graph, reports):
+    _render_overview(data)
+    graph_column, detail_column = st.columns([1.75, 1], gap="medium")
+    graph_panel = graph_column.container(key="metric_graph", border=True)
+    incident_panel = detail_column.container(key="incident_panel", border=True)
     incident_panel.header("Incident investigation")
     by_id = {report["incident_id"]: report for report in reports}
     report = None
     if by_id:
+        incident_panel.html(
+            '<span class="mm-chip"><span class="mm-dot mm-alert-dot" aria-hidden="true"></span>'
+            f'{len(by_id)} {"incident" if len(by_id) == 1 else "incidents"} detected</span>'
+        )
         def incident_label(incident_id):
             entry = by_id[incident_id]
             return f"{entry['country']} / {entry['device']} · {_time_label(entry['start_timestamp'])}"
@@ -82,11 +127,9 @@ def render_dashboard(data, graph, reports):
             f"{_time_label(report['end_timestamp'])} · Europe/Berlin · "
             f"{report['hours_affected']} affected hours"
         )
-        incident_panel.metric(
-            "Payment success · baseline → observed",
-            f"{report['baseline_payment_success_rate']:.1%} → {report['current_payment_success_rate']:.1%}",
-            delta=f"-{report['drop_percentage_points']:.1f} percentage points",
-            border=True,
+        _render_payment_comparison(incident_panel, report)
+        incident_panel.markdown(
+            f":orange[**↓ {report['drop_percentage_points']:.1f} percentage points**]"
         )
         incident_panel.metric("Observed revenue in affected hours", f"€{report['revenue_eur']:,.2f}")
     else:
@@ -110,11 +153,12 @@ def render_dashboard(data, graph, reports):
             f"{report['checkout_attempts']:,} attempts."
         )
         graph_panel.caption(" → ".join(metric.replace("_", " ").capitalize() for metric in report["metric_path"]))
-        _render_claude_analysis(incident_panel, report, graph)
+        _render_claude_analysis(graph_column, report, graph)
 
 
 def main():
     st.set_page_config(page_title="MarketMind", layout="wide")
+    st.html(Path(__file__).with_name("dashboard.css"))
     render_dashboard(*load_demo())
 
 
